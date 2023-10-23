@@ -1,5 +1,6 @@
 import random
 import math
+import copy
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -7,15 +8,15 @@ import argparse
 
 
 class Team:
-    def __init__(self, name, index, group, area, elo):
+    def __init__(self, name, index, group, area, elo, wins=0, losses=0):
         self.name = name
         self.id = index
         self.group = group
         self.area = area
         self.elo = elo
         self.initial_elo = elo 
-        self.wins = 0
-        self.losses = 0
+        self.wins = wins
+        self.losses = losses
         self.opponents = []
 
     def win_game(self):
@@ -148,40 +149,41 @@ def generate_matchups(teams):
     
     return matchups
 
-def simulate_swiss_round(teams, win_matrix):
-    # First round special draw
-    first_round_teams = teams.copy()
-    
-    # Sort teams by their group attribute
-    first_round_teams.sort(key=lambda x: x.group)
+def simulate_swiss_round(teams, win_matrix, starting_round=1):
+    if starting_round <= 1:
+        # First round special draw
+        first_round_teams = teams.copy()
+        
+        # Sort teams by their group attribute
+        first_round_teams.sort(key=lambda x: x.group)
 
-    # Divide teams into their respective groups
-    groups = [first_round_teams[i:i+4] for i in range(0, len(first_round_teams), 4)]
+        # Divide teams into their respective groups
+        groups = [first_round_teams[i:i+4] for i in range(0, len(first_round_teams), 4)]
 
-    # Pairing 1st group with 4th and 2nd group with 3rd
-    matchups = []
-    for i, j in [(0, 3), (1, 2)]:
-        while groups[i] and groups[j]:  # Ensure there are teams left to pair
-            team_from_group_i = random.choice(groups[i])
-            valid_opponents = [team for team in groups[j] if team.area != team_from_group_i.area]  # Filter out teams from the same area
-            # If there's no valid opponent, attempt to swap with the last matchup
-            if not valid_opponents and matchups:
-                last_matchup = matchups.pop()
-                valid_opponents = [last_matchup[1]] if last_matchup[1].area != last_matchup[0].area else []
-                if not valid_opponents:  # If still no valid opponent, raise an error
-                    raise ValueError("Couldn't resolve valid opponents after attempting to swap.")
-                groups[i].append(last_matchup[0])  # Add the swapped team back to its original group
-                groups[j].append(last_matchup[1])
-                # print(team_from_group_i.name, [x.name for x in valid_opponents])
-                # print([x.name for x in groups[i]], [x.name for x in groups[j]])
+        # Pairing 1st group with 4th and 2nd group with 3rd
+        matchups = []
+        for i, j in [(0, 3), (1, 2)]:
+            while groups[i] and groups[j]:  # Ensure there are teams left to pair
+                team_from_group_i = random.choice(groups[i])
+                valid_opponents = [team for team in groups[j] if team.area != team_from_group_i.area]  # Filter out teams from the same area
+                if not valid_opponents and matchups:
+                    last_matchup = matchups.pop()
+                    valid_opponents = [last_matchup[1]] if last_matchup[1].area != last_matchup[0].area else []
+                    if not valid_opponents:
+                        raise ValueError("Couldn't resolve valid opponents after attempting to swap.")
+                    groups[i].append(last_matchup[0])
+                    groups[j].append(last_matchup[1])
 
-            team_from_group_j = random.choice(valid_opponents)
-            groups[i].remove(team_from_group_i)
-            groups[j].remove(team_from_group_j)
+                team_from_group_j = random.choice(valid_opponents)
+                groups[i].remove(team_from_group_i)
+                groups[j].remove(team_from_group_j)
+                matchups.append((team_from_group_i, team_from_group_j))
+    else:
+        # If we are starting from a later round, just generate the matchups based on current standings
+        teams_in_play = [t for t in teams if not t.is_qualified() and not t.is_eliminated()]
+        matchups = generate_matchups(teams_in_play)
 
-            matchups.append((team_from_group_i, team_from_group_j))
-
-    round_num = 1
+    round_num = starting_round
     # Simulate the rounds
     while any(not t.is_qualified() and not t.is_eliminated() for t in teams):
         # print(f"Round {round_num} matchups:")
@@ -327,56 +329,58 @@ def save_win_loss_pie_charts(results_objects, teams, save_path='figs/win_loss_pi
     plt.close()
     
 
-def main(teams, num_simulations):
+def main(initial_teams, num_simulations, starting_round=1):    
     team_results = [Results() for _ in range(16)]
     win_matrix = [[0 for _ in range(16)] for _ in range(16)]
 
     for _ in range(num_simulations):
-        qualified_teams = simulate_swiss_round(teams, win_matrix)
+        teams = copy.deepcopy(initial_teams)
+        qualified_teams = simulate_swiss_round(teams, win_matrix, starting_round)
         for idx, team in enumerate(teams):
             team_results[idx].update(team)
         
-        for team in teams:
-            team.reset()
+        # for team in teams:
+        #     team.reset()
 
     rate_matrix = win_matrix_to_rate(win_matrix)
 
-    save_win_rate_heatmap(rate_matrix, teams, 'win_rate_heatmap.png')
-    save_elo_distribution(team_results, teams)
-    save_histogram(team_results, teams)
-    save_pie_chart(team_results, teams)
-    save_stacked_barplot(team_results, teams)
-    save_win_loss_heatmap(team_results, teams)
-    save_win_loss_pie_charts(team_results, teams)
+    save_win_rate_heatmap(rate_matrix, initial_teams)
+    save_elo_distribution(team_results, initial_teams)
+    save_histogram(team_results, initial_teams)
+    save_pie_chart(team_results, initial_teams)
+    save_stacked_barplot(team_results, initial_teams)
+    save_win_loss_heatmap(team_results, initial_teams)
+    save_win_loss_pie_charts(team_results, initial_teams)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Swiss Round Simulation")
     # parser.add_argument("-k", "--K", type=int, default=32, help="K-factor for Elo calculations")
     parser.add_argument("-s", "--simulations", type=int, default=1000000, help="Number of simulations to run")
+    parser.add_argument("-r", "--starting_round", type=int, default=1, help="Starting round for the simulation")
     args = parser.parse_args()
     
     ## set teams
-    jdg = Team("JDG", 0, 1, 'lpl', 2000)
-    gen = Team("GEN", 1, 1, 'lck', 1950)
-    g2 = Team("G2", 2, 1, 'lec', 1900)
-    nrg = Team("NRG", 3, 1, 'lcs', 1700)
-    blg = Team("BLG", 4, 2, 'lpl', 1800)
-    t1 = Team("T1", 5, 2, 'lck', 1850)
-    fnc = Team("FNC", 6, 2, 'lec', 1700)
-    c9 = Team("C9", 7, 2, 'lcs', 1700)
-    lng = Team("LNG", 8, 3, 'lpl', 1850)
-    kt = Team("KT", 9, 3, 'lck', 1800)
-    mad = Team("MAD", 10, 3, 'lec', 1600)
-    tl = Team("TL", 11, 3, 'lcs', 1600)
-    wbg = Team("WBG", 12, 4, 'lpl', 1800)
-    dk = Team("DK", 13, 4, 'lck', 1800)
-    bds = Team("BDS", 14, 4, 'lec', 1500)
-    gam = Team("GAM", 15, 4, 'vcs', 1500)
+    jdg = Team("JDG", 0, 1, 'lpl', 2000, 3, 0)
+    gen = Team("GEN", 1, 1, 'lck', 1950, 3, 0)
+    g2 = Team("G2", 2, 1, 'lec', 1900, 2, 1)
+    nrg = Team("NRG", 3, 1, 'lcs', 1700, 2, 1)
+    blg = Team("BLG", 4, 2, 'lpl', 1800, 2, 1)
+    t1 = Team("T1", 5, 2, 'lck', 1850, 2, 1)
+    fnc = Team("FNC", 6, 2, 'lec', 1700, 1, 2)
+    c9 = Team("C9", 7, 2, 'lcs', 1700, 1, 2)
+    lng = Team("LNG", 8, 3, 'lpl', 1850, 2, 1)
+    kt = Team("KT", 9, 3, 'lck', 1800, 2, 1)
+    mad = Team("MAD", 10, 3, 'lec', 1600, 1, 2)
+    tl = Team("TL", 11, 3, 'lcs', 1600, 1, 2)
+    wbg = Team("WBG", 12, 4, 'lpl', 1750, 1, 2)
+    dk = Team("DK", 13, 4, 'lck', 1750, 1, 2)
+    bds = Team("BDS", 14, 4, 'lec', 1500, 0, 3)
+    gam = Team("GAM", 15, 4, 'vcs', 1500, 0 ,3)
     
     teams = [jdg, gen, g2, nrg,
              blg, t1, fnc, c9,
              lng, kt, mad, tl,
              wbg, dk, bds, gam]
     
-    main(teams, args.simulations)
+    main(teams, args.simulations, args.starting_round)
 
